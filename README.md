@@ -1,6 +1,6 @@
 # Yuno Payment Orchestration System
 
-A production-grade simplified payment orchestration engine built with **Java 21 + Spring Boot 3.2**, inspired by Yuno's real-world architecture.
+A production-grade simplified payment orchestration engine built with **Java 21 + Spring Boot 3.5**, inspired by Yuno's real-world architecture.
 
 ---
 
