@@ -28,6 +28,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -60,6 +61,8 @@ class PaymentNegativeTest {
         when(routingEngine.getProvider(any())).thenReturn(Provider.PROVIDER_A);
     }
 
+    // ── TC-NEG-001: Missing Required Fields ──────────────────────────────────
+
     @Test
     @DisplayName("TC-NEG-001: Missing merchantId returns 400 Bad Request")
     void createPayment_missingMerchantId_returns400() throws Exception {
@@ -80,9 +83,15 @@ class PaymentNegativeTest {
                 )
                 .andExpect(status().isBadRequest())              // 400
                 .andExpect(jsonPath("$.error").value("Validation Failed"))
-                .andExpect(jsonPath("$.details.merchantId").exists()); // Field-level error
+                .andExpect(jsonPath("$.details").isMap())
+                .andExpect(result -> {
+                    String body = result.getResponse().getContentAsString();
+                    if (!body.contains("merchantId must not be blank")) {
+                        throw new AssertionError(
+                                "Expected 'merchantId must not be blank' in response but got: " + body);
+                    }
+                });
     }
-
     @Test
     @DisplayName("TC-NEG-002: Zero amount returns 400 Bad Request")
     void createPayment_zeroAmount_returns400() throws Exception {
@@ -103,8 +112,16 @@ class PaymentNegativeTest {
                                 .content(requestJson)
                 )
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.details.amount").exists());
+                .andExpect(jsonPath("$.details").isMap())
+                .andExpect(result -> {
+                    String body = result.getResponse().getContentAsString();
+                    if (!body.contains("amount must be greater than zero")) {
+                        throw new AssertionError(
+                                "Expected 'amount must be greater than zero' in response but got: " + body);
+                    }
+                });
     }
+
 
     @Test
     @DisplayName("TC-NEG-003: Missing X-Idempotency-Key header returns 400")
@@ -116,12 +133,13 @@ class PaymentNegativeTest {
                 .currency("USD")
                 .paymentMethod(PaymentMethod.CARD)
                 .build();
+
         mockMvc.perform(
                         post(API_PATH)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(objectMapper.writeValueAsString(request))
                 )
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest()); // Spring returns 400 for missing required headers
     }
 
     @Test
@@ -160,6 +178,7 @@ class PaymentNegativeTest {
         verify(mockConnector, times(1)).process(any(Payment.class));
     }
 
+
     @Test
     @DisplayName("TC-NEG-005: Primary provider fails, failover succeeds — payment completes")
     void createPayment_primaryProviderDown_failoverSucceeds() throws Exception {
@@ -194,7 +213,6 @@ class PaymentNegativeTest {
         verify(failoverConnector, times(1)).process(any());
     }
 
-
     @Test
     @DisplayName("TC-NEG-006: Both providers fail — returns 502 Bad Gateway")
     void createPayment_allProvidersFail_returns502() throws Exception {
@@ -202,6 +220,7 @@ class PaymentNegativeTest {
         ProviderConnector failoverConnector = mock(ProviderConnector.class);
         when(failoverConnector.getProvider()).thenReturn(Provider.PROVIDER_B);
 
+        // Both providers throw exceptions
         when(mockConnector.process(any()))
                 .thenThrow(new PaymentExceptions.ProviderUnavailableException("PROVIDER_A", "Down"));
         when(failoverConnector.process(any()))
@@ -226,6 +245,7 @@ class PaymentNegativeTest {
                 .andExpect(jsonPath("$.error").value("Payment Processing Failed"));
     }
 
+
     @Test
     @DisplayName("TC-NEG-007: Fetching non-existent payment returns 404")
     void getPayment_notFound_returns404() throws Exception {
@@ -236,6 +256,8 @@ class PaymentNegativeTest {
                 .andExpect(status().isNotFound())            // 404
                 .andExpect(jsonPath("$.error").value("Not Found"));
     }
+
+    // ── TC-NEG-008: Invalid Currency Format ──────────────────────────────────
 
     @Test
     @DisplayName("TC-NEG-008: Currency longer than 3 chars returns 400")
@@ -257,8 +279,17 @@ class PaymentNegativeTest {
                                 .content(requestJson)
                 )
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.details.currency").exists());
+                .andExpect(jsonPath("$.details").isMap())
+                .andExpect(result -> {
+                    String body = result.getResponse().getContentAsString();
+                    if (!body.contains("3-letter ISO")) {
+                        throw new AssertionError(
+                                "Expected currency ISO validation message in response but got: " + body);
+                    }
+                });
     }
+
+    // ── TC-NEG-009: Invalid UUID path parameter ───────────────────────────────
 
     @Test
     @DisplayName("TC-NEG-009: Malformed UUID in path returns 400")
