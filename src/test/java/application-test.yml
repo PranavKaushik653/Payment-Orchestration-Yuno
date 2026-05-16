@@ -11,7 +11,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: create-drop           # Auto-create schema from entities in tests
+      ddl-auto: create-drop
     database-platform: org.hibernate.dialect.H2Dialect
 
   data:
