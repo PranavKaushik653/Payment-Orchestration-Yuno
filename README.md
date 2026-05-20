@@ -1,122 +1,138 @@
 # Yuno Payment Orchestration System
 
-A production-grade simplified payment orchestration engine built with **Java 21 + Spring Boot 3.5**, inspired by Yuno's real-world architecture.
+A simplified payment orchestration engine built for the **Yuno Backend Developer (Java Core) Assessment**.
 
 ---
 
-## Architecture
+## What This Does
 
-```
-Client
-  ↓  HTTP (POST /api/v1/payments)
-PaymentController          ← Input validation, header extraction
-  ↓
-PaymentOrchestrationService ← Idempotency check, orchestration, retry/failover
-  ↓
-RoutingEngine              ← CARD → Provider A | UPI → Provider B
-  ↓
-ProviderConnector (A or B) ← External PSP call (Resilience4j retry + circuit breaker)
-  ↓
-PaymentRepository (JPA)   ← PostgreSQL persistence
-IdempotencyStore (Redis)   ← Exactly-once processing guarantee
-```
+Accepts payment requests from merchants, routes them to the correct payment provider (CARD → Provider A, UPI → Provider B), handles retries and failover if a provider is down, and guarantees a payment is never processed twice — even if the same request is sent multiple times.
 
 ---
 
-## Functional Requirements Implemented
+## Tech Stack
 
-| Feature | Implementation |
+| Layer | Technology |
 |---|---|
-| Create Payment API | `POST /api/v1/payments` |
-| Fetch Payment API | `GET /api/v1/payments/{id}` |
-| Routing (CARD → A, UPI → B) | `RoutingEngine` with Strategy Pattern |
-| Idempotency | Redis store keyed by `X-Idempotency-Key` header |
-| Retry | Resilience4j `@Retry` (3 attempts, 500ms wait) |
-| Failover | `processWithFailover()` in service layer |
-| Circuit Breaker | Resilience4j `@CircuitBreaker` (opens at 50% failure rate) |
-| Payment Status Tracking | `PENDING → PROCESSING → SUCCESS/FAILED` |
-| Metrics | Micrometer + Prometheus (`/actuator/prometheus`) |
+| Language | Java 21 |
+| Framework | Spring Boot 3.5.14 |
+| Database | PostgreSQL 16 |
+| Cache / Idempotency Store | Redis 7 |
+| Build Tool | Maven 3.9+ |
+| Resilience | Resilience4j (retry + circuit breaker) |
+| API Docs | SpringDoc OpenAPI (Swagger UI) |
+| Metrics | Micrometer + Prometheus |
 
 ---
 
 ## Prerequisites
 
-- **Java 21** ([download](https://adoptium.net/))
-- **Maven 3.9+** (`mvn -v` to verify)
-- **Docker** (for PostgreSQL + Redis)
+You need three things installed before starting. Check each one:
+
+```bash
+java -version
+# Must print: openjdk 21 or higher
+# Download from: https://adoptium.net/ (choose Java 21, any OS)
+
+mvn -version
+# Must print: Apache Maven 3.9 or higher
+# Download from: https://maven.apache.org/download.cgi
+
+docker --version
+# Must print: Docker version 24 or higher
+# Download from: https://docs.docker.com/get-docker/
+```
+
+If all three commands print a version number you are ready to proceed.
 
 ---
 
-## Installation & Setup
+## Running the Application
 
-### 1. Start Infrastructure (PostgreSQL + Redis)
+### Step 1 — Start PostgreSQL and Redis with Docker
+
+Run these two commands. They start both services in the background:
 
 ```bash
-# Start PostgreSQL
 docker run -d \
   --name yuno-postgres \
   -e POSTGRES_DB=yuno_payments \
   -e POSTGRES_USER=yuno \
   -e POSTGRES_PASSWORD=yuno_secret \
   -p 5432:5432 \
+  --health-cmd="pg_isready -U yuno" \
+  --health-interval=3s \
   postgres:16-alpine
 
-# Start Redis
 docker run -d \
   --name yuno-redis \
   -p 6379:6379 \
+  --health-cmd="redis-cli ping" \
+  --health-interval=3s \
   redis:7-alpine
 ```
 
-### 2. Create Database Schema
-
-```sql
--- Connect to postgres and run:
-CREATE TABLE payments (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    idempotency_key  VARCHAR(64) UNIQUE NOT NULL,
-    merchant_id      VARCHAR(64) NOT NULL,
-    amount           DECIMAL(19, 4) NOT NULL,
-    currency         VARCHAR(3) NOT NULL,
-    payment_method   VARCHAR(20) NOT NULL,
-    status           VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    assigned_provider VARCHAR(20),
-    provider_transaction_id VARCHAR(128),
-    failure_reason   VARCHAR(512),
-    created_at       TIMESTAMPTZ DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_payments_idempotency_key ON payments(idempotency_key);
-CREATE INDEX idx_payments_merchant_id ON payments(merchant_id);
-```
-
-### 3. Clone & Build
+Wait about 10 seconds, then verify both containers are healthy:
 
 ```bash
-git clone <your-repo-url>
-cd payment-orchestration
-mvn clean install -DskipTests
+docker ps
 ```
 
-### 4. Run the Application
+You should see `(healthy)` next to both `yuno-postgres` and `yuno-redis`. If it still says `(health: starting)`, wait a few more seconds and run `docker ps` again.
+
+### Step 2 — Clone and Build
+
+```bash
+git clone https://github.com/YOUR_USERNAME/yuno-payment-orchestration.git
+cd yuno-payment-orchestration
+mvn clean package -DskipTests
+```
+
+Expected output ends with:
+```
+BUILD SUCCESS
+```
+
+If you see `BUILD FAILURE`, confirm `java -version` prints 21 or higher — that is the most common cause.
+
+### Step 3 — Run the Application
 
 ```bash
 mvn spring-boot:run
 ```
 
-The server starts on **http://localhost:8080**.
+The application is ready when you see this line in the terminal output:
+```
+Started PaymentOrchestrationApplication in X.XXX seconds
+```
+
+> **Note:** The database schema (the `payments` table and its indexes) is created automatically on first startup. You do not need to run any SQL scripts manually.
+
+### Step 4 — Confirm It Is Running
+
+Open a new terminal tab and run:
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+Expected response:
+```json
+{"status":"UP"}
+```
+
+The application is running correctly. Proceed to the API usage section.
 
 ---
 
-## Execution Guide
+## API Usage
 
 ### Create a CARD Payment
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/payments \
   -H "Content-Type: application/json" \
-  -H "X-Idempotency-Key: $(uuidgen)" \
+  -H "X-Idempotency-Key: test-key-001" \
   -d '{
     "merchantId": "merchant-001",
     "amount": 150.00,
@@ -125,22 +141,28 @@ curl -X POST http://localhost:8080/api/v1/payments \
   }'
 ```
 
-**Expected Response (201 Created):**
+Expected response (`201 Created`):
 ```json
 {
-  "paymentId": "550e8400-e29b-41d4-a716-446655440000",
+  "paymentId": "a1b2c3d4-...",
   "status": "SUCCESS",
   "assignedProvider": "PROVIDER_A",
-  "providerTransactionId": "PA-A1B2C3D4"
+  "providerTransactionId": "PA-XXXXXXXX",
+  "merchantId": "merchant-001",
+  "amount": 150.00,
+  "currency": "USD",
+  "paymentMethod": "CARD"
 }
 ```
+
+`PROVIDER_A` in the response confirms that CARD routing worked correctly.
 
 ### Create a UPI Payment
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/payments \
   -H "Content-Type: application/json" \
-  -H "X-Idempotency-Key: $(uuidgen)" \
+  -H "X-Idempotency-Key: test-key-002" \
   -d '{
     "merchantId": "merchant-002",
     "amount": 500.00,
@@ -149,126 +171,159 @@ curl -X POST http://localhost:8080/api/v1/payments \
   }'
 ```
 
-### Fetch a Payment
+`assignedProvider` will be `PROVIDER_B`, confirming UPI routing.
+
+### Fetch a Payment by ID
+
+Copy the `paymentId` UUID from any create response above and substitute it:
 
 ```bash
 curl http://localhost:8080/api/v1/payments/{paymentId}
 ```
 
-### Test Idempotency (Same Key, Two Requests)
+### Test Idempotency
+
+This demonstrates that a customer cannot be charged twice if a merchant retries. Run this command **twice** without changing anything:
 
 ```bash
-KEY=$(uuidgen)
-# Both calls return the SAME payment — provider called only once
 curl -X POST http://localhost:8080/api/v1/payments \
-  -H "X-Idempotency-Key: $KEY" \
   -H "Content-Type: application/json" \
-  -d '{"merchantId":"m1","amount":100.00,"currency":"USD","paymentMethod":"CARD"}'
-
-curl -X POST http://localhost:8080/api/v1/payments \
-  -H "X-Idempotency-Key: $KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"merchantId":"m1","amount":100.00,"currency":"USD","paymentMethod":"CARD"}'
+  -H "X-Idempotency-Key: idempotency-demo-key" \
+  -d '{
+    "merchantId": "merchant-demo",
+    "amount": 200.00,
+    "currency": "USD",
+    "paymentMethod": "CARD"
+  }'
 ```
+
+Both responses will contain the **identical `paymentId`**. The second call returns the cached result — no new charge is created.
 
 ---
 
-## Running Tests
+## API Documentation (Swagger UI)
+
+With the application running, open this in your browser:
+
+```
+http://localhost:8080/swagger-ui/index.html
+```
+
+This shows the full interactive API documentation with request/response schemas. You can try the endpoints directly from the browser.
+
+---
+
+## Running the Tests
+
+The test suite uses H2 (in-memory database) and embedded Redis, so **Docker does not need to be running to run the tests**.
 
 ```bash
-# Run all tests (H2 + EmbeddedRedis — no Docker needed)
 mvn test
+```
 
-# Run only a specific test category
-mvn test -Dtest="ApplicationSanityTest"
-mvn test -Dtest="PaymentIntegrationTest"
-mvn test -Dtest="PaymentNegativeTest"
-mvn test -Dtest="RoutingEngineUnitTest"
+Expected output:
+```
+Tests run: 21, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
 
-# Run with verbose output
-mvn test -Dsurefire.useFile=false
+### What the Tests Cover
+
+| Suite | Class | What It Tests |
+|---|---|---|
+| Sanity | `ApplicationSanityTest` | Context loads, all beans wired, DB connection healthy |
+| Integration | `PaymentIntegrationTest` | Full HTTP flow for CARD payment, UPI payment, fetch by ID |
+| Negative | `PaymentNegativeTest` | Validation errors, provider failure, 404, idempotency replay |
+| Unit | `RoutingEngineUnitTest` | Routing rules and failover logic in isolation |
+
+---
+
+## Stopping and Cleaning Up
+
+```bash
+# Stop the application
+Ctrl + C   (in the terminal where mvn spring-boot:run is running)
+
+# Stop and remove the Docker containers
+docker stop yuno-postgres yuno-redis
+docker rm yuno-postgres yuno-redis
 ```
 
 ---
 
-## Test Case Documentation
+## Project Structure
 
-### Sanity Tests (`ApplicationSanityTest`)
-
-| ID | Test | Expected |
-|---|---|---|
-| SAN-001 | Spring context loads | No exceptions |
-| SAN-002 | All core beans wired | Not null |
-| SAN-003 | Database connection healthy | count() ≥ 0 |
-| SAN-004 | RoutingEngine has both providers | PROVIDER_A, PROVIDER_B found |
-
-**Classification:** Sanity
-
----
-
-### Integration Tests (`PaymentIntegrationTest`)
-
-| ID | Test | Method | Expected |
-|---|---|---|---|
-| INT-001 | Successful CARD payment | POST | 201, status=SUCCESS |
-| INT-002 | UPI routes to Provider B | POST | 201, providerB called |
-| INT-003 | Fetch payment by ID | GET | 200, correct data |
-
-**Classification:** Integration (Regression)
-
----
-
-### Negative Tests (`PaymentNegativeTest`)
-
-| ID | Test | Scenario | Expected |
-|---|---|---|---|
-| NEG-001 | Missing merchantId | Validation | 400, field error |
-| NEG-002 | Zero amount | Validation | 400, field error |
-| NEG-003 | Missing idempotency header | Missing header | 400 |
-| NEG-004 | Duplicate idempotency key | Retry scenario | 2xx, provider called once |
-| NEG-005 | Primary provider down | Failover | 201, failover provider used |
-| NEG-006 | All providers down | Cascading failure | 502 Bad Gateway |
-| NEG-007 | Non-existent payment ID | GET | 404 Not Found |
-| NEG-008 | Invalid currency format | Validation | 400, field error |
-| NEG-009 | Malformed UUID in path | Path param | 400 |
-
-**Classification:** Negative (Regression)
+```
+src/main/java/com/yuno/payments/
+├── controller/
+│   └── PaymentController.java           # HTTP entry point — POST and GET endpoints
+├── service/
+│   └── PaymentOrchestrationService.java # Orchestration brain — idempotency + failover
+├── routing/
+│   └── RoutingEngine.java               # CARD → ProviderA, UPI → ProviderB
+├── provider/
+│   └── ProviderConnectors.java          # Provider A and B with retry + circuit breaker
+├── idempotency/
+│   └── IdempotencyStore.java            # Redis-backed exactly-once guarantee
+├── model/
+│   ├── Payment.java                     # JPA entity (PostgreSQL)
+│   └── PaymentDTOs.java                 # Request and Response DTOs
+├── repository/
+│   └── PaymentRepository.java           # Spring Data JPA
+└── exception/
+    ├── PaymentExceptions.java            # Typed domain exceptions
+    └── GlobalExceptionHandler.java       # Maps exceptions to HTTP status codes
+```
 
 ---
 
-### Unit Tests (`RoutingEngineUnitTest`)
+## Architecture
 
-| ID | Test | Expected |
-|---|---|---|
-| UNIT-001 | CARD → Provider A | Correct connector returned |
-| UNIT-002 | UPI → Provider B | Correct connector returned |
-| UNIT-003 | Failover A → B | Provider B returned |
-| UNIT-004 | Failover B → A | Provider A returned |
-| UNIT-005 | All providers registered | No exception |
-
-**Classification:** Sanity (Regression)
-
----
-
-## Performance Considerations
-
-- **Connection Pooling:** HikariCP (max 20 DB connections)
-- **Redis timeouts:** 2s command timeout (fail-fast prevents thread starvation)
-- **Circuit Breaker:** Opens after 50% failure rate, preventing provider flood
-- **`@Transactional(readOnly = true)`** on GET operations: skips dirty-checking
-- **DB Indexes:** on `idempotency_key` and `merchant_id` for O(log n) lookups
-- **Metrics:** `payment.processing.duration` timer + `payment.success/failure` counters available at `/actuator/prometheus`
+```
+Client
+  ↓  POST /api/v1/payments  +  X-Idempotency-Key header
+PaymentController            → validates input, extracts header
+  ↓
+PaymentOrchestrationService  → checks Redis for duplicate key
+                             → saves PENDING record to PostgreSQL
+  ↓
+RoutingEngine                → CARD → PROVIDER_A  |  UPI → PROVIDER_B
+  ↓
+ProviderConnector            → calls provider (Resilience4j: 3 retries, 500ms wait)
+  ↓  if all retries fail  ↓
+  └─ resolveFailover()       → switches to the other provider
+  ↓
+PaymentRepository            → saves SUCCESS or FAILED status to PostgreSQL
+IdempotencyStore             → stores idempotency key → paymentId in Redis (24h TTL)
+```
 
 ---
 
-## Prompts Used During Development (Vibe Coding Log)
+## Demo Video
 
-1. *"Scaffold a Spring Boot 3.2 Java 21 Maven project for a payment orchestration system with PostgreSQL, Redis, and Resilience4j. Follow this architecture: Controller → Service → RoutingEngine → ProviderConnectors → Repository + IdempotencyStore."*
+[Watch the full demo on YouTube](https://youtu.be/YOUR_LINK_HERE)
 
-2. *"Implement idempotency using Redis. The key is from X-Idempotency-Key header. If key exists, return cached payment. If not, process and store. Explain the belt-and-suspenders approach with a DB unique constraint as fallback."*
+The video covers:
+- Architecture walkthrough (code)
+- Swagger UI tour
+- Live Postman demo — happy paths, idempotency, and failure scenarios
 
-3. *"Implement retry and failover logic in PaymentOrchestrationService. Resilience4j handles micro-retries per provider. The service handles macro-failover (switch providers). Explain the difference in code comments."*
+---
 
-4. *"Generate three tiers of tests: Sanity (context loads), Integration (full HTTP → DB flow with MockMvc and @MockBean), and Negative (provider down, duplicate key, validation failures). Add detailed comments explaining how Mockito's when/thenReturn/thenThrow/verify work."*
+## Troubleshooting
 
-5. *"Apply clean code: Strategy Pattern in RoutingEngine, separate DTO/Entity classes, GlobalExceptionHandler with typed exceptions, Lombok to reduce boilerplate, BigDecimal for money (never float), UUID PKs."*# Yuno-Payments
+**`Connection refused` on port 5432 or 6379**
+Docker containers are not running. Run `docker ps` to check. If you do not see `yuno-postgres` and `yuno-redis` listed, repeat Step 1.
+
+**`BUILD FAILURE` during `mvn clean package`**
+Run `java -version`. Must be Java 21 or higher. If you have multiple Java versions installed, set `JAVA_HOME` to point to Java 21.
+
+**Port 8080 already in use**
+Run the app on a different port:
+```bash
+mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=9090
+```
+Then replace `8080` with `9090` in all commands above.
+
+**Tests pass but application fails to start**
+Tests use an in-memory database and do not require Docker. The running application requires both PostgreSQL and Redis. Confirm Step 1 completed and `docker ps` shows both containers as `(healthy)`.

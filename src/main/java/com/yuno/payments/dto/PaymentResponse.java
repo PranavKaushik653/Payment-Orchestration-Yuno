@@ -6,13 +6,15 @@ import com.yuno.payments.enums.Provider;
 import com.yuno.payments.model.Payment;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
 @Getter
-@Builder
+@Setter
+@Builder(toBuilder = true)
 public class PaymentResponse {
     private UUID paymentId;
     private String idempotencyKey;

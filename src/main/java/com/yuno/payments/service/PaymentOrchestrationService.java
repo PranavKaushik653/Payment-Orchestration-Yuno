@@ -38,7 +38,12 @@ public class PaymentOrchestrationService {
         if (existingPaymentId.isPresent()) {
             log.info("Duplicate request detected for idempotency key={}", idempotencyKey);
             return paymentRepository.findById(UUID.fromString(existingPaymentId.get()))
-                    .map(PaymentResponse::from)
+                    .map(payment -> {
+                        PaymentResponse response = PaymentResponse.from(payment);
+                        response.setStatus(PaymentStatus.DUPLICATE);
+                        response.setMessage("Duplicate request — returning original payment result.");
+                        return response;
+                    })
                     .orElseThrow(() -> new PaymentExceptions.PaymentNotFoundException(existingPaymentId.get()));
         }
 
@@ -54,8 +59,7 @@ public class PaymentOrchestrationService {
         payment = paymentRepository.save(payment);
         log.info("Payment created id={} method={} status=PENDING", payment.getId(), payment.getPaymentMethod());
 
-        // ── STEP 3: ROUTE + PROCESS ───────────────────────────────────────────
-        // Update status to PROCESSING before calling the provider
+
         payment.setStatus(PaymentStatus.PROCESSING);
         payment = paymentRepository.save(payment);
 

@@ -25,7 +25,6 @@ public class PaymentController {
             @RequestHeader(IDEMPOTENCY_KEY_HEADER)
             @NotBlank(message = "X-Idempotency-Key header must not be blank")
             String idempotencyKey,
-
             @Valid @RequestBody CreatePaymentRequest request) {
 
         log.info("Received create payment request: merchantId={} method={} idempotencyKey={}",
