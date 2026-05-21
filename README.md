@@ -54,22 +54,9 @@ If all three commands print a version number you are ready to proceed.
 Run these two commands. They start both services in the background:
 
 ```bash
-docker run -d \
-  --name yuno-postgres \
-  -e POSTGRES_DB=yuno_payments \
-  -e POSTGRES_USER=yuno \
-  -e POSTGRES_PASSWORD=yuno_secret \
-  -p 5432:5432 \
-  --health-cmd="pg_isready -U yuno" \
-  --health-interval=3s \
-  postgres:16-alpine
+docker run -d --name yuno-postgres -e POSTGRES_DB=yuno_payments -e POSTGRES_USER=yuno -e POSTGRES_PASSWORD=yuno_secret -p 5432:5432 --health-cmd="pg_isready -U yuno" --health-interval=3s postgres:16-alpine
 
-docker run -d \
-  --name yuno-redis \
-  -p 6379:6379 \
-  --health-cmd="redis-cli ping" \
-  --health-interval=3s \
-  redis:7-alpine
+docker run -d --name yuno-redis -p 6379:6379 --health-cmd="redis-cli ping" --health-interval=3s redis:7-alpine
 ```
 
 Wait about 10 seconds, then verify both containers are healthy:
@@ -301,7 +288,7 @@ IdempotencyStore             → stores idempotency key → paymentId in Redis (
 
 ## Demo Video
 
-[Watch the full demo on YouTube](https://youtu.be/YOUR_LINK_HERE)
+Will be put soon....
 
 The video covers:
 - Architecture walkthrough (code)
